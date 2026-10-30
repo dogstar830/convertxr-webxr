@@ -557,8 +557,11 @@
       ff.on('log', function () { /* keep console noise down; errors surface via exec result */ });
       var coreURL = await util.toBlobURL(FFMPEG_CORE_BASE + '/ffmpeg-core.js', 'text/javascript');
       var wasmURL = await util.toBlobURL(FFMPEG_CORE_BASE + '/ffmpeg-core.wasm', 'application/wasm');
+      // Class worker must be same-origin (browsers block cross-origin Workers),
+      // so worker.js + its two imports are self-hosted under ffmpeg/ in this repo.
+      var classWorkerURL = new URL('ffmpeg/worker.js', window.location.href).href;
       stage('ffmpeg:core-load');
-      await ff.load({ coreURL: coreURL, wasmURL: wasmURL });
+      await ff.load({ classWorkerURL: classWorkerURL, coreURL: coreURL, wasmURL: wasmURL });
       state.ffmpeg = ff;
       state._fetchFile = util.fetchFile;
       stage('ffmpeg:ready');
