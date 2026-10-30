@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ConvertXR — Gr8yzone Studios Inc.</title>
+<script>
+/* ConvertXR built-in checker (Gr8yzone house rule — ships from first creation):
+   global error trap registered FIRST in the page. The last error
+   (message, stack, time, current screen/mode) persists to localStorage;
+   boot stages log to a ring the Info health panel displays. */
+(function () {
+  var EK = 'cx_lastError', SK = 'cx_bootStages';
+  window.__cxStages = [];
+  function stage(s) { try { window.__cxStages.push({ stage: s, ts: Date.now() }); if (window.__cxStages.length > 60) window.__cxStages.shift(); localStorage.setItem(SK, JSON.stringify(window.__cxStages.slice(-40))); } catch (e) {} }
+  function record(err, where) { try { localStorage.setItem(EK, JSON.stringify({ message: String((err && err.message) || err || 'unknown error'), stack: String((err && err.stack) || ''), ts: Date.now(), where: where || '', screen: (window.__cxCtx && window.__cxCtx.screen) || '', mode: (window.__cxCtx && window.__cxCtx.mode) || '', url: location.href })); } catch (e) {} }
+  window.__cxLogStage = stage; window.__cxRecordError = record;
+  stage('page:html-loaded');
+  window.addEventListener('error', function (ev) { record(ev.error || ev.message, 'window.onerror'); });
+  window.addEventListener('unhandledrejection', function (ev) { record(ev.reason, 'unhandledrejection'); });
+})();
+</script>
+<script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "@ffmpeg/ffmpeg": "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js",
+    "@ffmpeg/util": "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js"
+  }
+}
+</script>
+<style>
+  :root{
+    --bg:#0A0F1E; --bg2:#060A16; --accent:#8FE8FF; --ink:#F5FAFF; --ink-dim:#9FB8CC;
+    --glass:rgba(10,18,34,.88); --glass-line:rgba(143,232,255,.35);
+    --green:#1fae54; --green-d:#0f7a39; --red:#d92b2b; --red-d:#9c1a1a; --amber:#E8A33D;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--bg);
+    font-family:"Segoe UI",system-ui,Roboto,Helvetica,Arial,sans-serif;color:var(--ink)}
+  a-scene{position:fixed;inset:0}
+  /* ---------- top bar (flush, full-bleed) ---------- */
+  #topbar{position:fixed;top:0;left:0;right:0;z-index:30;display:flex;align-items:center;gap:10px;
+    padding:10px 14px;background:linear-gradient(180deg,rgba(4,8,18,.95),rgba(4,8,18,.6) 85%,transparent);
+    pointer-events:none}
+  #topbar>*{pointer-events:auto}
+  #brand{font-weight:800;font-size:23px;letter-spacing:.5px;color:var(--ink);text-shadow:0 0 14px rgba(143,232,255,.5)}
+  #brand small{display:block;font-size:10px;font-weight:600;letter-spacing:1.6px;color:var(--accent)}
+  .spacer{flex:1}
+  .ghostBtn{background:var(--glass);border:1px solid var(--glass-line);color:var(--ink);border-radius:12px;
+    padding:11px 16px;font-size:14px;font-weight:700;cursor:pointer;min-height:48px}
+  .ghostBtn:active{transform:scale(.96)}
+  /* ---------- main panel ---------- */
+  #panel{position:fixed;top:66px;left:10px;bottom:64px;width:430px;max-width:calc(100vw - 20px);z-index:25;
+    background:var(--glass);border:1px solid var(--glass-line);border-radius:18px;display:flex;flex-direction:column;
+    backdrop-filter:blur(10px);box-shadow:0 10px 40px rgba(0,0,0,.55)}
+  #tabs{display:flex;gap:6px;padding:10px 10px 0}
+  .tab{flex:1;border:1px solid var(--glass-line);background:rgba(255,255,255,.05);color:var(--ink-dim);
+    border-radius:10px 10px 0 0;padding:11px 2px;font-size:14px;font-weight:700;cursor:pointer;min-height:48px}
+  .tab.active{background:rgba(143,232,255,.18);color:#fff;border-bottom-color:transparent}
+  .page{display:none;flex:1;overflow-y:auto;padding:14px;flex-direction:column}
+  .page.active{display:flex}
+  /* converter */
+  #dropZone{border:2px dashed rgba(143,232,255,.5);border-radius:16px;padding:22px 14px;text-align:center;
+    background:rgba(143,232,255,.05);cursor:pointer}
+  #dropZone.drag{border-color:var(--accent);background:rgba(143,232,255,.14)}
+  #dropZone .bigIc{font-size:44px;line-height:1}
+  #dropZone .dzMain{font-size:17px;font-weight:800;margin-top:8px}
+  #dropZone .dzSub{font-size:12.5px;color:var(--ink-dim);margin-top:4px;line-height:1.5}
+  #fileInfo{display:none;margin-top:12px;background:rgba(255,255,255,.05);border:1px solid var(--glass-line);
+    border-radius:12px;padding:10px 12px;font-size:13.5px;line-height:1.55;word-break:break-word}
+  #fileInfo b{color:var(--accent)}
+  #sizeWarn{display:none;margin-top:8px;background:rgba(232,163,61,.14);border:1px solid rgba(232,163,61,.6);
+    border-radius:12px;padding:9px 12px;font-size:12.5px;line-height:1.5;color:#ffe1ad}
+  .secLabel{font-size:11.5px;font-weight:800;letter-spacing:1.2px;color:var(--ink-dim);margin:16px 0 8px}
+  #fmtRow{display:flex;flex-wrap:wrap;gap:8px}
+  .fmtChip{flex:1 1 30%;border:1px solid var(--glass-line);background:rgba(255,255,255,.05);color:var(--ink);
+    border-radius:13px;padding:13px 4px;font-size:16px;font-weight:800;cursor:pointer;min-height:56px;
+    display:flex;flex-direction:column;align-items:center;gap:2px}
+  .fmtChip .sub{font-size:10.5px;font-weight:600;color:var(--ink-dim);letter-spacing:.3px}
+  .fmtChip.active{background:rgba(143,232,255,.22);border-color:var(--accent);color:#fff}
+  .fmtChip.active .sub{color:var(--accent)}
+  .optRow{display:flex;align-items:center;gap:10px;margin:8px 0;font-size:14px}
+  .optRow label{flex:none;font-weight:700;color:var(--ink-dim);font-size:13px}
+  .fld{flex:1;background:rgba(0,0,0,.4);border:1px solid var(--glass-line);border-radius:10px;color:#fff;
+    font-size:15px;padding:11px;outline:none;min-height:48px;min-width:0}
+  select.fld option{color:#000}
+  input[type=range].fld{padding:0;accent-color:var(--accent)}
+  #optBox{display:none}
+  #convertBtn{margin-top:18px;border:none;border-radius:14px;padding:17px;font-size:18px;font-weight:800;
+    color:#04121e;background:linear-gradient(180deg,var(--accent),#4db8d9);cursor:pointer;
+    box-shadow:0 6px 22px rgba(143,232,255,.35);width:100%}
+  #convertBtn:disabled{opacity:.4;cursor:default;box-shadow:none}
+  #convertBtn:active{transform:scale(.98)}
+  #progBox{display:none;margin-top:16px}
+  #progTrack{height:16px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden;border:1px solid var(--glass-line)}
+  #progFill{height:100%;width:0%;background:linear-gradient(90deg,#4db8d9,var(--accent));transition:width .2s ease}
+  #progRow{display:flex;align-items:center;gap:10px;margin-top:9px;font-size:13.5px}
+  #progPct{font-weight:800;color:var(--accent);font-size:16px}
+  #cancelBtn{background:linear-gradient(180deg,#f04747,var(--red-d));border:none;color:#fff;border-radius:10px;
+    padding:10px 16px;font-size:13.5px;font-weight:800;cursor:pointer;min-height:44px}
+  #resultBox{display:none;margin-top:16px;background:rgba(31,174,84,.1);border:1px solid rgba(31,174,84,.55);
+    border-radius:14px;padding:12px}
+  #resultBox .rHead{font-size:15px;font-weight:800}
+  #resultMeta{font-size:13px;color:var(--ink-dim);margin-top:4px;line-height:1.55}
+  #resultPreview{margin-top:10px;text-align:center}
+  #resultPreview img,#resultPreview video{max-width:100%;max-height:260px;border-radius:10px}
+  #resultPreview audio{width:100%}
+  #downloadBtn{display:block;margin-top:12px;text-align:center;text-decoration:none;border-radius:12px;padding:15px;
+    font-size:16px;font-weight:800;color:#fff;background:linear-gradient(180deg,#27c463,var(--green-d))}
+  /* info / health */
+  .setBlock{background:rgba(255,255,255,.05);border:1px solid var(--glass-line);border-radius:14px;padding:12px;margin-bottom:10px}
+  .setBlock h3{margin:0 0 8px;font-size:14.5px}
+  .honest{font-size:12.5px;line-height:1.55;color:var(--ink)}
+  .honest b{color:var(--accent)}
+  .smallNote{font-size:11.5px;color:var(--ink-dim);line-height:1.5}
+  .miniBtn{flex:1;background:rgba(255,255,255,.08);border:1px solid var(--glass-line);color:var(--ink);
+    border-radius:8px;padding:10px 2px;font-size:12px;font-weight:700;cursor:pointer;min-height:44px}
+  .miniBtn.danger{color:#ffb3b3}
+  .rowBtns{display:flex;gap:7px}
+  #healthError{display:none;background:rgba(0,0,0,.45);border:1px solid rgba(255,128,128,.5);border-radius:10px;
+    padding:10px;font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow-y:auto;color:#ffd9d9}
+  /* ---------- footer (pinned flush to bottom) ---------- */
+  #footer{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;align-items:center;gap:10px;
+    padding:9px 14px;background:linear-gradient(0deg,rgba(4,8,18,.97),rgba(4,8,18,.75) 80%,transparent);
+    font-size:12.5px;color:var(--ink-dim)}
+  #footer b{color:var(--ink)}
+  #footStatus{margin-left:auto;font-weight:700;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #toast{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:60;background:rgba(4,20,34,.96);
+    border:1px solid var(--glass-line);color:#fff;padding:11px 18px;border-radius:999px;font-size:14px;font-weight:600;
+    display:none;box-shadow:0 8px 30px rgba(0,0,0,.6);max-width:92vw;text-align:center}
+  @media (max-width:760px){
+    #panel{top:auto;height:56vh;left:6px;right:6px;width:auto;bottom:52px}
+    #brand{font-size:19px}
+  }
+</style>
+</head>
+<body>
+
+<!-- ======================= 3D SCENE ======================= -->
+<a-scene id="scene" background="color:#0A0F1E" fog="type:linear; color:#0A0F1E; near:14; far:42"
+         vr-mode-ui="enabled:true" renderer="antialias:true; colorManagement:true; alpha:true"
+         webxr="optionalFeatures: local-floor">
+  <a-entity id="rig">
+    <a-camera id="cam" position="0 1.65 3.2" look-controls="enabled:true" wasd-controls="enabled:false"
+              cursor="rayOrigin: mouse" raycaster="objects:.clickable; far:30"></a-camera>
+    <a-entity id="leftHand" laser-controls="hand:left" raycaster="objects:.clickable; far:30; lineColor:#8FE8FF; lineOpacity:0.7"></a-entity>
+    <a-entity id="rightHand" laser-controls="hand:right" raycaster="objects:.clickable; far:30; lineColor:#8FE8FF; lineOpacity:0.7"></a-entity>
+  </a-entity>
+
+  <a-light type="ambient" color="#8FB8D8" intensity="0.8"></a-light>
+  <a-light type="directional" color="#ffffff" intensity="1.1" position="4 8 5"></a-light>
+  <a-light type="point" color="#8FE8FF" intensity="14" distance="18" position="0 3.4 -1"></a-light>
+
+  <!-- deck -->
+  <a-cylinder position="0 -0.06 0" radius="5.4" height="0.12" color="#0A1A30"
+              material="roughness:0.45; metalness:0.55"></a-cylinder>
+  <a-ring position="0 0.005 0" rotation="-90 0 0" radius-inner="5.15" radius-outer="5.38"
+          material="color:#8FE8FF; emissive:#4db8d9; emissiveIntensity:1.4; side:double"></a-ring>
+
+  <!-- in-world status panel (canvas texture, painted by the app script) -->
+  <a-plane id="panelStatus" position="0 1.9 -2.2" width="2.9" height="1.55"></a-plane>
+  <a-plane id="titleCard" position="0 3.15 -2.6" width="3.6" height="0.62"></a-plane>
+</a-scene>
+
+<!-- ======================= HTML OVERLAY UI ======================= -->
+<div id="topbar">
+  <div id="brand">ConvertXR<small>GR8YZONE STUDIOS INC.</small></div>
+  <div class="spacer"></div>
+  <button class="ghostBtn" id="btnInfoTop">ⓘ Info</button>
+</div>
+
+<div id="panel">
+  <div id="tabs">
+    <button class="tab active" data-page="convert">🔁 Convert</button>
+    <button class="tab" data-page="info">ⓘ Info</button>
+  </div>
+
+  <!-- CONVERT PAGE -->
+  <div class="page active" id="page-convert">
+    <div id="dropZone" role="button" aria-label="Pick a file to convert">
+      <div class="bigIc">📂</div>
+      <div class="dzMain">Tap to pick a file</div>
+      <div class="dzSub">Images · Video · Audio — converted right here on this device.<br>Nothing is uploaded. Ever.</div>
+    </div>
+    <input type="file" id="fileInput" accept="image/*,video/*,audio/*" style="display:none">
+    <div id="fileInfo"></div>
+    <div id="sizeWarn">⚠️ <b>Large file.</b> Conversion runs in this browser's memory — files over ~200 MB may fail or crash the tab on a headset. Smaller clips work best.</div>
+
+    <div class="secLabel" id="fmtLabel" style="display:none">CONVERT TO</div>
+    <div id="fmtRow"></div>
+
+    <div id="optBox">
+      <!-- image options -->
+      <div id="optImage" style="display:none">
+        <div class="optRow"><label>Size</label>
+          <select class="fld" id="imgSize">
+            <option value="100">100% — original</option>
+            <option value="50">50%</option>
+            <option value="custom">Custom width…</option>
+          </select>
+        </div>
+        <div class="optRow" id="imgCustomRow" style="display:none"><label>Width (px)</label>
+          <input class="fld" id="imgWidth" type="number" min="16" max="8192" value="1024" inputmode="numeric">
+        </div>
+        <div class="optRow" id="imgQualityRow"><label>Quality</label>
+          <input class="fld" id="imgQuality" type="range" min="10" max="100" value="92">
+          <span id="imgQualityVal" style="font-weight:800;color:var(--accent);min-width:42px;text-align:right">92%</span>
+        </div>
+      </div>
+      <!-- gif options -->
+      <div id="optGif" style="display:none">
+        <div class="optRow"><label>Start (sec)</label>
+          <input class="fld" id="gifStart" type="number" min="0" step="0.5" value="0" inputmode="decimal">
+        </div>
+        <div class="optRow"><label>Length (sec)</label>
+          <input class="fld" id="gifDur" type="number" min="1" max="30" step="1" value="5" inputmode="numeric">
+        </div>
+        <div class="smallNote">GIFs are capped at 480px wide, 12 fps — keep clips short.</div>
+      </div>
+    </div>
+
+    <button id="convertBtn" disabled>Convert</button>
+
+    <div id="progBox">
+      <div id="progTrack"><div id="progFill"></div></div>
+      <div id="progRow"><span id="progPct">0%</span><span id="progLabel">Working…</span><span class="spacer"></span>
+        <button id="cancelBtn">✕ Cancel</button></div>
+    </div>
+
+    <div id="resultBox">
+      <div class="rHead">✅ Done</div>
+      <div id="resultMeta"></div>
+      <div id="resultPreview"></div>
+      <a id="downloadBtn" href="#" download>⬇ Download</a>
+    </div>
+  </div>
+
+  <!-- INFO PAGE -->
+  <div class="page" id="page-info">
+    <div class="setBlock">
+      <h3>🔁 What ConvertXR does</h3>
+      <div class="honest">Pick a file, pick a format, tap <b>Convert</b>. Images convert instantly with the browser's canvas. Video and audio convert with <b>ffmpeg running inside this page</b> (WebAssembly) — the first video/audio conversion downloads the ffmpeg engine (~31 MB) once, then it's cached.<br><br>
+      <b>Everything happens on this device.</b> No uploads, no server, no account, no cost. Your file never leaves the browser.<br><br>
+      <b>Honest limits:</b> conversion speed is phone/headset-class, not desktop-class. Very large files (over ~200 MB) can run the browser out of memory — you'll get a warning first, and a crash guard saves the error below if it happens.</div>
+    </div>
+    <div class="setBlock" id="healthBlock">
+      <h3>🩺 App health / last error</h3>
+      <div class="smallNote" id="healthStatus">No errors recorded. If anything ever breaks, the last error is saved here automatically — even mid-boot.</div>
+      <pre id="healthError"></pre>
+      <div class="smallNote" style="font-weight:800;margin:10px 0 4px">BOOT STAGES REACHED (this session)</div>
+      <div class="smallNote" id="healthStages" style="white-space:pre-wrap;line-height:1.6">No stages logged yet this session.</div>
+      <div class="rowBtns" style="margin-top:9px">
+        <button class="miniBtn" id="healthCopy">Copy error</button>
+        <button class="miniBtn" id="healthRefresh">Refresh</button>
+        <button class="miniBtn danger" id="healthClear">Clear</button>
+      </div>
+      <div class="smallNote" style="margin-top:7px">ConvertXR watches itself from the very first line of the page: if a boot stage ever fails, the error lands here with its stack trace, and the flat 2D app still opens — never a blank page.</div>
+    </div>
+    <div class="setBlock">
+      <h3>🗄️ Your data</h3>
+      <div class="smallNote">ConvertXR stores nothing but its own error log (above) in this browser. Converted files exist only in memory until you download them; closing the tab erases them.</div>
+    </div>
+    <div class="smallNote" style="text-align:center;padding:4px">ConvertXR v0.1 WebXR • Developed by <b>Gr8yzone Studios Inc.</b>, Panama City, FL</div>
+  </div>
+</div>
+
+<div id="footer"><span><b>ConvertXR v0.1</b> • Gr8yzone Studios Inc.</span><span id="footStatus">Ready</span></div>
+<div id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+  window.__cxCtx = { screen: 'convert', mode: '2d' };
+  var stage = window.__cxLogStage, record = window.__cxRecordError;
+  stage('app:script-start');
+
+  var $ = function (id) { return document.getElementById(id); };
+  var els = {
+    dropZone: $('dropZone'), fileInput: $('fileInput'), fileInfo: $('fileInfo'), sizeWarn: $('sizeWarn'),
+    fmtLabel: $('fmtLabel'), fmtRow: $('fmtRow'), optBox: $('optBox'), optImage: $('optImage'), optGif: $('optGif'),
+    imgSize: $('imgSize'), imgCustomRow: $('imgCustomRow'), imgWidth: $('imgWidth'),
+    imgQuality: $('imgQuality'), imgQualityVal: $('imgQualityVal'), imgQualityRow: $('imgQualityRow'),
+    gifStart: $('gifStart'), gifDur: $('gifDur'),
+    convertBtn: $('convertBtn'), progBox: $('progBox'), progFill: $('progFill'), progPct: $('progPct'),
+    progLabel: $('progLabel'), cancelBtn: $('cancelBtn'),
+    resultBox: $('resultBox'), resultMeta: $('resultMeta'), resultPreview: $('resultPreview'), downloadBtn: $('downloadBtn'),
+    footStatus: $('footStatus'), toast: $('toast')
+  };
+
+  var SIZE_WARN_BYTES = 200 * 1024 * 1024;
+  var state = {
+    file: null, kind: null, outFmt: null,
+    converting: false, cancelRequested: false,
+    resultUrl: null, ffmpeg: null, ffmpegLoading: null
+  };
+
+  /* ---------------- toast + status ---------------- */
+  var toastTimer = null;
+  function toast(msg, ms) {
+    els.toast.textContent = msg; els.toast.style.display = 'block';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { els.toast.style.display = 'none'; }, ms || 3200);
+  }
+  function setStatus(txt) {
+    els.footStatus.textContent = txt;
+    paintWorldPanel(txt);
+  }
+
+  /* ---------------- in-world status panel (canvas texture) ---------------- */
+  var worldCanvas = null, worldCtx = null, worldTex = null;
+  function initWorldPanel() {
+    try {
+      worldCanvas = document.createElement('canvas'); worldCanvas.width = 640; worldCanvas.height = 342;
+      worldCtx = worldCanvas.getContext('2d');
+      var titleC = document.createElement('canvas'); titleC.width = 768; titleC.height = 132;
+      var tctx = titleC.getContext('2d');
+      tctx.fillStyle = '#0A0F1E'; tctx.fillRect(0, 0, 768, 132);
+      tctx.font = '800 64px Segoe UI, system-ui, sans-serif'; tctx.textAlign = 'center';
+      tctx.fillStyle = '#8FE8FF'; tctx.fillText('ConvertXR', 384, 72);
+      tctx.font = '600 26px Segoe UI, system-ui, sans-serif'; tctx.fillStyle = '#9FB8CC';
+      tctx.fillText('CONVERT ANYTHING · ON DEVICE', 384, 112);
+      var titleTex = new THREE.CanvasTexture(titleC);
+      var titleEl = $('titleCard');
+      if (titleEl) titleEl.setAttribute('material', { src: titleTex, transparent: false });
+      worldTex = new THREE.CanvasTexture(worldCanvas);
+      var panelEl = $('panelStatus');
+      if (panelEl) panelEl.setAttribute('material', { src: worldTex, transparent: false });
+      paintWorldPanel('Ready');
+      stage('scene:world-panel-ready');
+    } catch (e) { record(e, 'initWorldPanel'); }
+  }
+  function paintWorldPanel(statusLine) {
+    if (!worldCtx || !worldTex) return;
+    try {
+      var c = worldCtx;
+      c.fillStyle = '#0A1424'; c.fillRect(0, 0, 640, 342);
+      c.strokeStyle = 'rgba(143,232,255,.55)'; c.lineWidth = 4; c.strokeRect(6, 6, 628, 330);
+      c.textAlign = 'center';
+      c.font = '800 44px Segoe UI, system-ui, sans-serif'; c.fillStyle = '#F5FAFF';
+      c.fillText('🔁 ConvertXR', 320, 78);
+      c.font = '700 34px Segoe UI, system-ui, sans-serif'; c.fillStyle = '#8FE8FF';
+      var line = String(statusLine || 'Ready');
+      if (line.length > 30) line = line.slice(0, 29) + '…';
+      c.fillText(line, 320, 168);
+      c.font = '500 25px Segoe UI, system-ui, sans-serif'; c.fillStyle = '#9FB8CC';
+      c.fillText('Images · Video · Audio', 320, 238);
+      c.fillText('Converted on this device — no uploads', 320, 278);
+      worldTex.needsUpdate = true;
+    } catch (e) { /* panel is decorative; never break the app for it */ }
+  }
+
+  /* ---------------- tabs ---------------- */
+  function showPage(name) {
+    window.__cxCtx.screen = name;
+    document.querySelectorAll('.tab').forEach(function (t) { t.classList.toggle('active', t.dataset.page === name); });
+    document.querySelectorAll('.page').forEach(function (p) { p.classList.toggle('active', p.id === 'page-' + name); });
+    if (name === 'info') refreshHealth();
+  }
+  document.querySelectorAll('.tab').forEach(function (t) {
+    t.addEventListener('click', function () { showPage(t.dataset.page); });
+  });
+  $('btnInfoTop').addEventListener('click', function () { showPage('info'); });
+
+  /* ---------------- file picking ---------------- */
+  function fmtBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+    return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+  }
+  function detectKind(file) {
+    var t = (file.type || '').toLowerCase(), n = (file.name || '').toLowerCase();
+    if (t.indexOf('image/') === 0 || /\.(png|jpe?g|webp|gif|bmp|avif)$/.test(n)) return 'image';
+    if (t.indexOf('video/') === 0 || /\.(mp4|webm|mov|mkv|avi|m4v)$/.test(n)) return 'video';
+    if (t.indexOf('audio/') === 0 || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)$/.test(n)) return 'audio';
+    return null;
+  }
+  var FORMATS = {
+    image: [
+      { id: 'png', label: 'PNG', sub: 'lossless' },
+      { id: 'jpg', label: 'JPG', sub: 'small file' },
+      { id: 'webp', label: 'WebP', sub: 'modern' }
+    ],
+    video: [
+      { id: 'mp4', label: 'MP4', sub: 'video' },
+      { id: 'webm', label: 'WebM', sub: 'video' },
+      { id: 'gif', label: 'GIF', sub: 'short clip' },
+      { id: 'mp3', label: 'MP3', sub: 'audio only' },
+      { id: 'wav', label: 'WAV', sub: 'audio only' }
+    ],
+    audio: [
+      { id: 'mp3', label: 'MP3', sub: 'audio' },
+      { id: 'wav', label: 'WAV', sub: 'audio' },
+      { id: 'ogg', label: 'OGG', sub: 'audio' }
+    ]
+  };
+  function baseName(name) { return (name || 'converted').replace(/\.[^.]+$/, '').replace(/[^\w\- ]+/g, '').trim() || 'converted'; }
+
+  function onFilePicked(file) {
+    if (!file) return;
+    var kind = detectKind(file);
+    if (!kind) { toast('⚠️ That file type is not supported yet.'); record(new Error('unsupported file type: ' + (file.type || file.name)), 'onFilePicked'); return; }
+    state.file = file; state.kind = kind; state.outFmt = null;
+    hideResult();
+    els.fileInfo.style.display = 'block';
+    els.fileInfo.innerHTML = '📄 <b></b><br>Type: ' + kind.toUpperCase() + ' · Size: ' + fmtBytes(file.size);
+    els.fileInfo.querySelector('b').textContent = file.name;
+    els.sizeWarn.style.display = file.size > SIZE_WARN_BYTES ? 'block' : 'none';
+    buildFormatChips(kind);
+    setStatus('File ready — pick a format');
+    stage('file:picked:' + kind);
+  }
+  function buildFormatChips(kind) {
+    els.fmtRow.innerHTML = '';
+    els.fmtLabel.style.display = 'block';
+    FORMATS[kind].forEach(function (f) {
+      var b = document.createElement('button');
+      b.className = 'fmtChip'; b.dataset.fmt = f.id;
+      b.innerHTML = f.label + '<span class="sub">' + f.sub + '</span>';
+      b.addEventListener('click', function () { selectFormat(f.id); });
+      els.fmtRow.appendChild(b);
+    });
+    selectFormat(FORMATS[kind][0].id);
+  }
+  function selectFormat(fmt) {
+    state.outFmt = fmt;
+    document.querySelectorAll('.fmtChip').forEach(function (c) { c.classList.toggle('active', c.dataset.fmt === fmt); });
+    var showImg = state.kind === 'image';
+    var showGif = state.kind === 'video' && fmt === 'gif';
+    els.optBox.style.display = (showImg || showGif) ? 'block' : 'none';
+    els.optImage.style.display = showImg ? 'block' : 'none';
+    els.optGif.style.display = showGif ? 'block' : 'none';
+    if (showImg) els.imgQualityRow.style.display = (fmt === 'png') ? 'none' : 'flex';
+    els.convertBtn.disabled = state.converting || !state.file;
+  }
+  els.dropZone.addEventListener('click', function () { els.fileInput.click(); });
+  els.fileInput.addEventListener('change', function () {
+    if (els.fileInput.files && els.fileInput.files[0]) onFilePicked(els.fileInput.files[0]);
+    els.fileInput.value = '';
+  });
+  ['dragenter', 'dragover'].forEach(function (ev) { els.dropZone.addEventListener(ev, function (e) { e.preventDefault(); els.dropZone.classList.add('drag'); }); });
+  ['dragleave', 'drop'].forEach(function (ev) { els.dropZone.addEventListener(ev, function (e) { e.preventDefault(); els.dropZone.classList.remove('drag'); }); });
+  els.dropZone.addEventListener('drop', function (e) {
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) onFilePicked(f);
+  });
+  els.imgSize.addEventListener('change', function () {
+    els.imgCustomRow.style.display = els.imgSize.value === 'custom' ? 'flex' : 'none';
+  });
+  els.imgQuality.addEventListener('input', function () { els.imgQualityVal.textContent = els.imgQuality.value + '%'; });
+
+  /* ---------------- result ---------------- */
+  function hideResult() {
+    els.resultBox.style.display = 'none';
+    if (state.resultUrl) { try { URL.revokeObjectURL(state.resultUrl); } catch (e) {} state.resultUrl = null; }
+    els.resultPreview.innerHTML = '';
+  }
+  function showResult(blob, outName, kind, outFmt) {
+    hideResult();
+    state.resultUrl = URL.createObjectURL(blob);
+    els.downloadBtn.href = state.resultUrl;
+    els.downloadBtn.setAttribute('download', outName);
+    els.resultMeta.textContent = state.file.name + ' (' + fmtBytes(state.file.size) + ')  →  ' + outName + ' (' + fmtBytes(blob.size) + ')';
+    var pv = els.resultPreview;
+    if (kind === 'image' || outFmt === 'gif') {
+      var img = document.createElement('img'); img.src = state.resultUrl; img.alt = 'Converted image'; pv.appendChild(img);
+    } else if (kind === 'video' && (outFmt === 'mp4' || outFmt === 'webm')) {
+      var v = document.createElement('video'); v.src = state.resultUrl; v.controls = true; v.playsInline = true; pv.appendChild(v);
+    } else {
+      var a = document.createElement('audio'); a.src = state.resultUrl; a.controls = true; pv.appendChild(a);
+    }
+    els.resultBox.style.display = 'block';
+    setStatus('✅ Done — ' + outName);
+    stage('convert:done:' + outFmt);
+  }
+
+  /* ---------------- progress / converting state ---------------- */
+  function setConverting(on, label) {
+    state.converting = on;
+    els.progBox.style.display = on ? 'block' : 'none';
+    els.convertBtn.disabled = on || !state.file;
+    els.convertBtn.textContent = on ? 'Converting…' : 'Convert';
+    if (on) setProgress(0, label || 'Working…');
+  }
+  function setProgress(pct, label) {
+    var p = Math.max(0, Math.min(100, Math.round(pct)));
+    els.progFill.style.width = p + '%';
+    els.progPct.textContent = p + '%';
+    if (label) els.progLabel.textContent = label;
+    setStatus('Converting… ' + p + '%');
+  }
+  els.cancelBtn.addEventListener('click', function () {
+    if (!state.converting) return;
+    state.cancelRequested = true;
+    els.progLabel.textContent = 'Cancelling…';
+    if (state.ffmpeg) { try { state.ffmpeg.terminate(); } catch (e) {} state.ffmpeg = null; state.ffmpegLoading = null; }
+  });
+
+  /* ---------------- image conversion (Canvas) ---------------- */
+  function convertImage(file, outFmt) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var scale = 1;
+          var mode = els.imgSize.value;
+          if (mode === '50') scale = 0.5;
+          else if (mode === 'custom') {
+            var w = parseInt(els.imgWidth.value, 10);
+            if (w > 0 && w !== img.naturalWidth) scale = w / img.naturalWidth;
+          }
+          var cw = Math.max(1, Math.round(img.naturalWidth * scale));
+          var ch = Math.max(1, Math.round(img.naturalHeight * scale));
+          var canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
+          var ctx = canvas.getContext('2d');
+          if (outFmt === 'jpg') { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, cw, ch); }
+          ctx.drawImage(img, 0, 0, cw, ch);
+          URL.revokeObjectURL(url);
+          var mime = outFmt === 'png' ? 'image/png' : (outFmt === 'jpg' ? 'image/jpeg' : 'image/webp');
+          var q = parseInt(els.imgQuality.value, 10) / 100;
+          if (canvas.toBlob) {
+            canvas.toBlob(function (blob) {
+              if (blob) resolve(blob); else reject(new Error('Canvas produced no output (format may be unsupported in this browser).'));
+            }, mime, q);
+          } else {
+            var bin = atob(canvas.toDataURL(mime, q).split(',')[1]);
+            var arr = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+            resolve(new Blob([arr], { type: mime }));
+          }
+        } catch (e) { URL.revokeObjectURL(url); reject(e); }
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('Could not decode that image in this browser.')); };
+      img.src = url;
+    });
+  }
+
+  /* ---------------- ffmpeg (lazy, module, CDN) ---------------- */
+  var FFMPEG_CORE_BASE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
+  function loadFFmpeg() {
+    if (state.ffmpeg) return Promise.resolve(state.ffmpeg);
+    if (state.ffmpegLoading) return state.ffmpegLoading;
+    state.ffmpegLoading = (async function () {
+      stage('ffmpeg:module-import');
+      setProgress(2, 'Loading converter engine (one-time download)…');
+      var ffmod = await import('@ffmpeg/ffmpeg');
+      var util = await import('@ffmpeg/util');
+      var ff = new ffmod.FFmpeg();
+      ff.on('progress', function (ev) {
+        if (state.converting && !state.cancelRequested) {
+          var p = ev && typeof ev.progress === 'number' ? ev.progress * 100 : 0;
+          setProgress(p, 'Converting…');
+        }
+      });
+      ff.on('log', function () { /* keep console noise down; errors surface via exec result */ });
+      var coreURL = await util.toBlobURL(FFMPEG_CORE_BASE + '/ffmpeg-core.js', 'text/javascript');
+      var wasmURL = await util.toBlobURL(FFMPEG_CORE_BASE + '/ffmpeg-core.wasm', 'application/wasm');
+      stage('ffmpeg:core-load');
+      await ff.load({ coreURL: coreURL, wasmURL: wasmURL });
+      state.ffmpeg = ff;
+      state._fetchFile = util.fetchFile;
+      stage('ffmpeg:ready');
+      return ff;
+    })();
+    state.ffmpegLoading.catch(function () { state.ffmpegLoading = null; });
+    return state.ffmpegLoading;
+  }
+
+  function ffmpegArgs(kind, outFmt, inName, outName) {
+    if (kind === 'video' && outFmt === 'mp4') return ['-i', inName, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', outName];
+    if (kind === 'video' && outFmt === 'webm') return ['-i', inName, '-c:v', 'libvpx', '-b:v', '1200k', '-c:a', 'libvorbis', '-b:a', '128k', outName];
+    if (kind === 'video' && outFmt === 'gif') {
+      var start = Math.max(0, parseFloat(els.gifStart.value) || 0);
+      var dur = Math.min(30, Math.max(1, parseFloat(els.gifDur.value) || 5));
+      return ['-ss', String(start), '-t', String(dur), '-i', inName,
+        '-vf', 'fps=12,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer', outName];
+    }
+    if (outFmt === 'mp3') return ['-i', inName, '-vn', '-c:a', 'libmp3lame', '-q:a', '2', outName];
+    if (outFmt === 'wav') return ['-i', inName, '-vn', '-c:a', 'pcm_s16le', outName];
+    if (outFmt === 'ogg') return ['-i', inName, '-vn', '-c:a', 'libvorbis', '-q:a', '5', outName];
+    return null;
+  }
+  var OUT_MIME = { mp4: 'video/mp4', webm: 'video/webm', gif: 'image/gif', mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg' };
+
+  async function convertWithFFmpeg(file, kind, outFmt) {
+    var ff = await loadFFmpeg();
+    if (state.cancelRequested) throw new Error('__cancelled__');
+    var ext = (file.name.split('.').pop() || 'bin').toLowerCase().replace(/[^\w]+/g, '') || 'bin';
+    var inName = 'input.' + ext;
+    var outName = baseName(file.name) + '.' + outFmt;
+    var diskOut = 'output.' + outFmt;
+    var args = ffmpegArgs(kind, outFmt, inName, diskOut);
+    if (!args) throw new Error('That conversion is not supported.');
+    setProgress(4, 'Reading file…');
+    await ff.writeFile(inName, await state._fetchFile(file));
+    setProgress(6, 'Converting…');
+    var code = await ff.exec(args);
+    if (state.cancelRequested) throw new Error('__cancelled__');
+    if (code !== 0) throw new Error('ffmpeg failed (exit ' + code + '). The file may be corrupt or use an unsupported codec.');
+    var data = await ff.readFile(diskOut);
+    try { await ff.deleteFile(inName); await ff.deleteFile(diskOut); } catch (e) {}
+    var blob = new Blob([data.buffer || data], { type: OUT_MIME[outFmt] || 'application/octet-stream' });
+    return { blob: blob, outName: outName };
+  }
+
+  /* ---------------- convert button ---------------- */
+  els.convertBtn.addEventListener('click', async function () {
+    if (!state.file || !state.outFmt || state.converting) return;
+    state.cancelRequested = false;
+    hideResult();
+    setConverting(true, state.kind === 'image' ? 'Converting image…' : 'Loading converter engine…');
+    stage('convert:start:' + state.kind + '->' + state.outFmt);
+    try {
+      if (state.kind === 'image') {
+        setProgress(40, 'Converting image…');
+        var blob = await convertImage(state.file, state.outFmt);
+        setProgress(100, 'Done');
+        showResult(blob, baseName(state.file.name) + '.' + (state.outFmt === 'jpg' ? 'jpg' : state.outFmt), 'image', state.outFmt);
+      } else {
+        var res = await convertWithFFmpeg(state.file, state.kind, state.outFmt);
+        setProgress(100, 'Done');
+        showResult(res.blob, res.outName, state.kind, state.outFmt);
+      }
+      toast('✅ Conversion complete');
+    } catch (err) {
+      if (state.cancelRequested || (err && err.message === '__cancelled__')) {
+        toast('Conversion cancelled');
+        setStatus('Cancelled — ready');
+      } else {
+        record(err, 'convert');
+        toast('⚠️ Conversion failed — see Info → App health');
+        setStatus('⚠️ Conversion failed');
+      }
+    } finally {
+      setConverting(false);
+      els.convertBtn.disabled = !state.file;
+      if (!state.converting) els.progBox.style.display = 'none';
+    }
+  });
+
+  /* ---------------- health panel ---------------- */
+  function refreshHealth() {
+    try {
+      var raw = localStorage.getItem('cx_lastError');
+      var hs = $('healthStatus'), he = $('healthError'), hg = $('healthStages');
+      if (raw) {
+        var e = JSON.parse(raw);
+        hs.textContent = 'Last error · ' + new Date(e.ts).toLocaleString() + (e.where ? ' · ' + e.where : '');
+        he.textContent = e.message + (e.stack ? '\n\n' + e.stack : '');
+        he.style.display = 'block';
+      } else { hs.textContent = 'No errors recorded. If anything ever breaks, the last error is saved here automatically — even mid-boot.'; he.style.display = 'none'; }
+      var stages = [];
+      try { stages = JSON.parse(localStorage.getItem('cx_bootStages') || '[]'); } catch (e2) {}
+      var live = window.__cxStages || [];
+      var all = stages.length ? stages : live;
+      hg.textContent = all.length ? all.map(function (s) { return '• ' + s.stage; }).join('\n') : 'No stages logged yet this session.';
+    } catch (e) { /* health panel must never crash the app */ }
+  }
+  $('healthRefresh').addEventListener('click', refreshHealth);
+  $('healthClear').addEventListener('click', function () {
+    try { localStorage.removeItem('cx_lastError'); } catch (e) {}
+    refreshHealth(); toast('Error log cleared');
+  });
+  $('healthCopy').addEventListener('click', function () {
+    var txt = $('healthError').textContent || '';
+    if (navigator.clipboard && txt) navigator.clipboard.writeText(txt).then(function () { toast('Error copied'); }, function () { toast('Copy not available here'); });
+    else toast('No error to copy');
+  });
+
+  /* ---------------- boot ---------------- */
+  stage('app:ui-ready');
+  var sceneEl = $('scene');
+  if (sceneEl) {
+    if (sceneEl.hasLoaded) initWorldPanel();
+    else sceneEl.addEventListener('loaded', function () { stage('scene:loaded'); initWorldPanel(); });
+    sceneEl.addEventListener('enter-vr', function () { window.__cxCtx.mode = 'vr'; stage('scene:enter-vr'); });
+    sceneEl.addEventListener('exit-vr', function () { window.__cxCtx.mode = '2d'; });
+  }
+  setStatus('Ready');
+  stage('app:ready');
+})();
+</script>
+</body>
+</html>
